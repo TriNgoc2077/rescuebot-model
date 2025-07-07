@@ -1,0 +1,9 @@
+torch-directml        
+transformers          
+gym                    
+gym-minigrid          
+mlagents              
+stable-baselines3[extra]
+tensorboard           
+numpy
+opencv-python 
