@@ -12,7 +12,7 @@ class RescueEnv(gym.Env):
         super().__init__()
         base = gym.make(env_name)
         base = RGBImgObsWrapper(base)   
-        base = ImgObsWrapper(base)     
+        # base = ImgObsWrapper(base)     
         self.env = base
 
         self.img_size = img_size
@@ -36,7 +36,7 @@ class RescueEnv(gym.Env):
         self.action_space = self.env.action_space
 
     def reset(self):
-        obs = self.env.reset()
+        obs, _ = self.env.reset()
         return self._process(obs)
 
     def step(self, action):
@@ -49,7 +49,7 @@ class RescueEnv(gym.Env):
         return self.env.render(mode)
 
     def _process(self, obs):
-        img = obs                   
+        img = obs['image']
         img = cv2.resize(img, (self.img_size, self.img_size))
         img = img.transpose(2, 0, 1)           
         boxes = self._extract_boxes()
