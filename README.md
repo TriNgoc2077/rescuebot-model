@@ -2,4 +2,4 @@
 
 Vision Transformer and Deep Reinforcement Learning for Rescue Robot
 
-### -> Some dependencies of this project use for GPU AMD
+### Note: We use torch-directml in dependence for GPU AMD
