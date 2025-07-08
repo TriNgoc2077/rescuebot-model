@@ -85,9 +85,19 @@ class DQNAgent:
                 qvals = self.policy_net(feat, boxes)
                 return qvals.argmax(dim=1).item()
 
-    def store_transition(self, *args):
+    def store_transition(self, state_feat, state_boxes, action, reward, next_feat, next_boxes, done):
         # args: state_feat, state_boxes, action, reward, next_feat, next_boxes, done
-        self.memory.append(Transition(*args))
+        self.memory.append(
+            Transition(
+                state_feat.detach(),
+                state_boxes.detach(),
+                action,
+                reward,
+                next_feat.detach(),
+                next_boxes.detach(),
+                done
+            )
+        )
 
     def learn(self):
         # Learning summary: 

@@ -40,7 +40,8 @@ class RescueEnv(gym.Env):
         return self._process(obs)
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
         processed = self._process(obs)
         info["raw_obs"] = obs
         return processed, reward, done, info

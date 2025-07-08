@@ -1,0 +1,27 @@
+log_dir: logs
+ckpt_dir: ckpts
+
+env:
+  name: "MiniGrid-Empty-8x8-v0"
+  img_size: 224
+  max_boxes: 5
+
+vit:
+  model_name: "google/vit-base-patch16-224"
+  pretrained: true
+  freeze_backbone: false
+
+agent:
+  lr: 0.0001
+  gamma: 0.99
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.00001
+  target_update_freq: 1000
+  buffer_size: 100000
+  batch_size: 64
+
+train:
+  num_episodes: 1000
+  max_steps_per_episode: 200
+  save_freq: 100
