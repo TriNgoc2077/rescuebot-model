@@ -1,6 +1,0 @@
-1. Setup environment (python 3.10.11 or manual created with > Python: Select Interpreter)
-python -m venv .venv
-.venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
-2. pip install torch-directml

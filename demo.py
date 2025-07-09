@@ -7,7 +7,7 @@ from src.agents.dqn_agent import DQNAgent
 
 def main():
     config_path = "configs/default.yaml"
-    ckpt_path = "ckpts/dqn_final.pth"
+    ckpt_path = "ckpts/dqn_best.pth"
 
     with open(config_path, 'r') as f:
         cfg = yaml.safe_load(f)

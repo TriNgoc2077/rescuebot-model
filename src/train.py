@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import StepLR
 from src.envs.rescue_env import RescueEnv
 from src.features.vit_extractor import ViTFeatureExtractorModule
 from src.agents.dqn_agent import DQNAgent
-
+from src.utils.replay_buffer import ReplayBuffer
 
 def find_latest_checkpoint(ckpt_dir):
     """Return the latest .pth checkpoint file path or None."""
@@ -73,6 +73,11 @@ def main(cfg_path="configs/default.yaml", resume=True):
         epsilon_decay=cfg['agent']['epsilon_decay'],
         target_update_freq=cfg['agent']['target_update_freq'],
         buffer_size=cfg['agent']['buffer_size'],
+        batch_size=cfg['agent']['batch_size']
+    )
+
+    agent.memory = ReplayBuffer(
+        capacity=cfg['agent']['buffer_size'],
         batch_size=cfg['agent']['batch_size']
     )
 
