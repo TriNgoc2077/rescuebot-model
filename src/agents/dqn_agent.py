@@ -150,7 +150,20 @@ class DQNAgent:
 
     def load(self, path: str):
         ckpt = torch.load(path, map_location=self.device)
-        self.policy_net.load_state_dict(ckpt['policy'])
-        self.target_net.load_state_dict(ckpt['target'])
-        self.optimizer.load_state_dict(ckpt['optimizer'])
-        self.epsilon = ckpt.get('epsilon', self.epsilon)
+        # old format: policy/target keys
+        if isinstance(ckpt, dict) and 'policy' in ckpt and 'target' in ckpt:
+            policy_sd = ckpt['policy']
+            target_sd = ckpt['target']
+            # restore optimizer & epsilon
+            self.optimizer.load_state_dict(ckpt.get('optimizer', self.optimizer.state_dict()))
+            self.epsilon = ckpt.get('epsilon', self.epsilon)
+        # new format: 'model' key
+        elif isinstance(ckpt, dict) and 'model' in ckpt:
+            policy_sd = target_sd = ckpt['model']
+        # raw state_dict
+        else:
+            policy_sd = target_sd = ckpt
+        # load nets
+        self.policy_net.load_state_dict(policy_sd)
+        self.target_net.load_state_dict(target_sd)
+

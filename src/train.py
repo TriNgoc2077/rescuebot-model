@@ -1,10 +1,10 @@
 import os
-import time
 import yaml
-import torch
 import glob
 import re
+import torch
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import StepLR
 
 from src.envs.rescue_env import RescueEnv
 from src.features.vit_extractor import ViTFeatureExtractorModule
@@ -12,68 +12,40 @@ from src.agents.dqn_agent import DQNAgent
 
 
 def find_latest_checkpoint(ckpt_dir):
-    """Find the latest checkpoint file in the checkpoint directory"""
+    """Return the latest .pth checkpoint file path or None."""
     if not os.path.exists(ckpt_dir):
         return None
-    
-    # Look for checkpoint files with pattern dqn_ep*.pth
-    ckpt_files = glob.glob(os.path.join(ckpt_dir, "dqn_ep*.pth"))
-    if not ckpt_files:
-        # Also check for final checkpoint
-        final_ckpt = os.path.join(ckpt_dir, "dqn_final.pth")
-        if os.path.exists(final_ckpt):
-            return final_ckpt, None
-        return None, None
-    
-    # Extract episode numbers and find the latest
-    episode_numbers = []
-    for ckpt_file in ckpt_files:
-        match = re.search(r'dqn_ep(\d+)\.pth', ckpt_file)
-        if match:
-            episode_numbers.append((int(match.group(1)), ckpt_file))
-    
-    if episode_numbers:
-        episode_numbers.sort(key=lambda x: x[0])
-        latest_ep, latest_file = episode_numbers[-1]
-        return latest_file, latest_ep
-    
-    return None, None
-
-
-def load_training_state(ckpt_path):
-    """Load training state from checkpoint"""
-    if not os.path.exists(ckpt_path):
+    files = glob.glob(os.path.join(ckpt_dir, '*.pth'))
+    if not files:
         return None
-    
-    try:
-        checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-        return checkpoint
-    except Exception as e:
-        print(f"Error loading checkpoint {ckpt_path}: {e}")
-        return None
+    def extract_ep(path):
+        m = re.search(r'dqn_ep(\d+)\.pth', os.path.basename(path))
+        return int(m.group(1)) if m else -1
+    files = sorted(files, key=lambda p: (extract_ep(p), os.path.getmtime(p)), reverse=True)
+    return files[0]
 
 
-def save_training_state(agent, episode, global_step, episode_rewards, ckpt_path):
-    """Save complete training state"""
-    checkpoint = {
+def save_training_state(agent, episode, global_step, rewards, ckpt_path, optimizer=None, scheduler=None):
+    """Save model weights and training metadata."""
+    torch.save(agent.policy_net.state_dict(), ckpt_path)
+    meta = {
         'episode': episode,
         'global_step': global_step,
-        'episode_rewards': episode_rewards,
+        'episode_rewards': rewards,
     }
-    
-    # Save agent using its own save method and merge with training state
-    agent.save(ckpt_path)
-    
-    # Load the saved agent checkpoint and add training metadata
-    agent_checkpoint = torch.load(ckpt_path, map_location='cpu')
-    agent_checkpoint.update(checkpoint)
-    
-    # Save the combined checkpoint
-    torch.save(agent_checkpoint, ckpt_path)
+    if optimizer is not None:
+        meta['optimizer_state'] = optimizer.state_dict()
+    if scheduler is not None:
+        meta['scheduler_state'] = scheduler.state_dict()
+    torch.save({'model': torch.load(ckpt_path, map_location='cpu'), **meta}, ckpt_path)
 
 
-def main(config_path="configs/default.yaml", resume=True):
-    with open(config_path, 'r') as f:
+def compute_manhattan(p1, p2):
+    return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
+
+
+def main(cfg_path="configs/default.yaml", resume=True):
+    with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f)
 
     device = torch.device(cfg.get('device', 'cuda') if torch.cuda.is_available() else 'cpu')
@@ -81,13 +53,7 @@ def main(config_path="configs/default.yaml", resume=True):
     os.makedirs(cfg['log_dir'], exist_ok=True)
     os.makedirs(cfg['ckpt_dir'], exist_ok=True)
 
-    # Initialize environment and feature extractor
-    env = RescueEnv(
-        env_name=cfg['env']['name'],
-        img_size=cfg['env']['img_size'],
-        max_boxes=cfg['env']['max_boxes']
-    )
-
+    env = RescueEnv(cfg['env']['name'], cfg['env']['img_size'], cfg['env']['max_boxes'])
     vit_ext = ViTFeatureExtractorModule(
         model_name=cfg['vit']['model_name'],
         pretrained=cfg['vit']['pretrained'],
@@ -95,7 +61,6 @@ def main(config_path="configs/default.yaml", resume=True):
         device=device
     )
 
-    # Initialize agent
     agent = DQNAgent(
         feat_dim=vit_ext.hidden_dim,
         max_boxes=cfg['env']['max_boxes'],
@@ -111,114 +76,99 @@ def main(config_path="configs/default.yaml", resume=True):
         batch_size=cfg['agent']['batch_size']
     )
 
-    # Initialize training variables
-    start_episode = 1
+    lr_step = cfg['agent'].get('lr_step_size', 100000)
+    lr_gamma = cfg['agent'].get('lr_gamma', 0.9)
+    scheduler = StepLR(agent.optimizer, step_size=lr_step, gamma=lr_gamma)
+
+    step_penalty = cfg.get('reward', {}).get('step_penalty', -0.01)
+    dist_weight = cfg.get('reward', {}).get('dist_weight', 0.0)
+
+    start_ep = 1
     global_step = 0
-    episode_rewards = []
-
-    # Try to load checkpoint if resume is True
+    rewards = []
     if resume:
-        latest_ckpt, latest_ep = find_latest_checkpoint(cfg['ckpt_dir'])
-        if latest_ckpt:
-            print(f"Found checkpoint: {latest_ckpt}")
-            checkpoint = load_training_state(latest_ckpt)
-            
-            if checkpoint:
-                # Load agent using its own load method
-                agent.load(latest_ckpt)
-                
-                # Load training state - handle both old and new checkpoint formats
-                if 'episode' in checkpoint:
-                    # New format checkpoint with training metadata
-                    start_episode = checkpoint['episode'] + 1
-                    global_step = checkpoint.get('global_step', 0)
-                    episode_rewards = checkpoint.get('episode_rewards', [])
-                    print(f"Resumed training from episode {start_episode-1} (new format)")
-                elif latest_ep is not None:
-                    # Old format checkpoint - infer from filename
-                    start_episode = latest_ep + 1
-                    global_step = latest_ep * cfg['train']['max_steps_per_episode']  # Estimate global step
-                    episode_rewards = [0.0] * latest_ep  # Dummy rewards history
-                    print(f"Resumed training from episode {latest_ep} (old format - estimated)")
-                else:
-                    # Fallback
-                    start_episode = 1
-                    global_step = 0
-                    episode_rewards = []
-                    print("Could not determine episode number, starting from episode 1")
-                
-                print(f"Starting episode: {start_episode}")
-                print(f"Global step: {global_step}")
-                print(f"Episode rewards history: {len(episode_rewards)} episodes")
-            else:
-                print("Failed to load checkpoint, starting from scratch")
+        ckpt = find_latest_checkpoint(cfg['ckpt_dir'])
+        if ckpt:
+            data = torch.load(ckpt, map_location=device)
+            agent.load(ckpt)
+            if 'optimizer_state' in data:
+                agent.optimizer.load_state_dict(data['optimizer_state'])
+            if 'scheduler_state' in data:
+                scheduler.load_state_dict(data['scheduler_state'])
+            start_ep = data.get('episode', 0) + 1
+            global_step = data.get('global_step', 0)
+            rewards = data.get('episode_rewards', [])
+            print(f"Resumed from {ckpt}: ep {start_ep-1}, step {global_step}")
         else:
-            print("No checkpoint found, starting from scratch")
-    else:
-        print("Resume disabled, starting from scratch")
+            print("No checkpoint found, starting fresh.")
 
-    # Initialize TensorBoard writer
-    writer = SummaryWriter(log_dir=cfg['log_dir'])
+    writer = SummaryWriter(cfg['log_dir'])
+    best_avg = max(rewards[-100:]) if rewards else -float('inf')
 
-    # Training loop
-    for ep in range(start_episode, cfg['train']['num_episodes'] + 1):
+    for ep in range(start_ep, cfg['train']['num_episodes'] + 1):
         obs = env.reset()
         feat = vit_ext([obs['image']])[0]
         boxes = torch.tensor(obs['boxes'], device=device)
         ep_reward = 0.0
 
+        prev_dist = None
+        if dist_weight > 0.0 and 'agent_pos' in obs:
+            prev_dist = compute_manhattan(obs['agent_pos'], env.goal_pos)
+
         for t in range(cfg['train']['max_steps_per_episode']):
-            # Select and perform action
             action = agent.select_action(feat, boxes)
-            next_obs, reward, done, info = env.step(action)
+            next_obs, reward, done, _ = env.step(action)
+
+            reward += step_penalty
+
+            if dist_weight > 0.0 and prev_dist is not None and 'agent_pos' in next_obs:
+                curr_dist = compute_manhattan(next_obs['agent_pos'], env.goal_pos)
+                reward += dist_weight * (prev_dist - curr_dist)
+                prev_dist = curr_dist
+
             next_feat = vit_ext([next_obs['image']])[0]
             next_boxes = torch.tensor(next_obs['boxes'], device=device)
 
-            # Store transition and learn
             agent.store_transition(feat, boxes, action, reward, next_feat, next_boxes, done)
             agent.learn()
-            global_step += 1
-            ep_reward += reward
 
             feat, boxes = next_feat, next_boxes
+            ep_reward += reward
+            global_step += 1
+            scheduler.step()
 
-            writer.add_scalar('train/reward_step', reward, global_step)
-
+            writer.add_scalar('train/step_reward', reward, global_step)
             if done:
                 break
 
-        episode_rewards.append(ep_reward)
-        avg_reward = sum(episode_rewards[-100:]) / min(len(episode_rewards), 100)
-
+        rewards.append(ep_reward)
+        avg100 = sum(rewards[-100:]) / min(len(rewards), 100)
         writer.add_scalar('train/episode_reward', ep_reward, ep)
-        writer.add_scalar('train/avg_reward_100', avg_reward, ep)
-        writer.add_scalar('train/epsilon', agent.epsilon if hasattr(agent, 'epsilon') else 0, ep)
+        writer.add_scalar('train/avg_reward_100', avg100, ep)
+        writer.add_scalar('train/epsilon', agent.epsilon, ep)
+        print(f"Ep {ep}/{cfg['train']['num_episodes']} | R: {ep_reward:.2f} | Av100: {avg100:.2f}")
 
-        print(f"Episode {ep}/{cfg['train']['num_episodes']} - Reward: {ep_reward:.2f} - Avg100: {avg_reward:.2f}")
+        if avg100 > best_avg:
+            best_avg = avg100
+            agent.save(os.path.join(cfg['ckpt_dir'], 'dqn_best.pth'))
+            print(f"New best model at ep {ep}, avg100 {avg100:.2f}")
 
-        # Save checkpoint
         if ep % cfg['train']['save_freq'] == 0:
-            ckpt_path = os.path.join(cfg['ckpt_dir'], f"dqn_ep{ep}.pth")
-            save_training_state(agent, ep, global_step, episode_rewards, ckpt_path)
-            print(f"Checkpoint saved: {ckpt_path}")
+            path = os.path.join(cfg['ckpt_dir'], f"dqn_ep{ep}.pth")
+            save_training_state(agent, ep, global_step, rewards, path, optimizer=agent.optimizer, scheduler=scheduler)
+            print(f"Saved checkpoint {path}")
 
-    # Save final checkpoint
-    final_ckpt_path = os.path.join(cfg['ckpt_dir'], 'dqn_final.pth')
-    save_training_state(agent, cfg['train']['num_episodes'], global_step, episode_rewards, final_ckpt_path)
-    print(f"Final checkpoint saved: {final_ckpt_path}")
-    
+    final_path = os.path.join(cfg['ckpt_dir'], 'dqn_final.pth')
+    save_training_state(agent, cfg['train']['num_episodes'], global_step, rewards, final_path, optimizer=agent.optimizer, scheduler=scheduler)
+    print("Training complete. Final checkpoint saved.")
     writer.close()
 
 
 if __name__ == '__main__':
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Train DQN Agent with Checkpoint Support')
-    parser.add_argument('--config', type=str, default='configs/default.yaml', 
-                       help='Path to config file')
-    parser.add_argument('--no-resume', action='store_true', 
-                       help='Start training from scratch instead of resuming')
-    
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', '-c', default='configs/default.yaml')
+    parser.add_argument('--no-resume', action='store_true')
     args = parser.parse_args()
-    
-    main(config_path=args.config, resume=not args.no_resume)
+    main(cfg_path=args.config, resume=not args.no_resume)
