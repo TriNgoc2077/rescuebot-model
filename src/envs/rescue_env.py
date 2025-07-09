@@ -10,7 +10,7 @@ class RescueEnv(gym.Env):
                  img_size: int = 224,
                  max_boxes: int = 5):
         super().__init__()
-        base = gym.make(env_name)
+        base = gym.make(env_name, render_mode="rgb_array")
         base = RGBImgObsWrapper(base)   
         # base = ImgObsWrapper(base)     
         self.env = base
@@ -47,7 +47,7 @@ class RescueEnv(gym.Env):
         return processed, reward, done, info
 
     def render(self, mode="human"):
-        return self.env.render(mode)
+        return self.env.render()
 
     def _process(self, obs):
         img = obs['image']

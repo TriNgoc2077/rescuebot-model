@@ -7,3 +7,5 @@ stable-baselines3[extra]
 tensorboard           
 numpy
 opencv-python 
+pyglet 
+pygame
