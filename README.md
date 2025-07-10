@@ -16,7 +16,7 @@ The system is designed as a modular pipeline:
 - **`envs/`**: Defines the custom simulation environments and generates RGB image observations for training.
 - **`features/`**: Extracts high-level vision features using a ViT backbone.
 - **`agents/`**: Implements the Deep Q-Network agent that learns to take optimal actions based on vision and environment state.
-- **`utils/`**: Contains supporting modules such as the replay buffer.
+- **`utils/`**: Contains supporting modules such as the replay buffer, per buffer.
 - **`configs/default.yaml`**: Stores all key hyperparameters for easy tuning.
 - **`logs/`**: Records training metrics for monitoring and analysis.
 - **`ckpts/`**: Stores pre-trained checkpoints for quick resumption or further fine-tuning.
@@ -34,7 +34,12 @@ The system is designed as a modular pipeline:
 ## Quick Setup
 
 ```bash
-# 1. Create virtual environment (Python 3.10+)
+git clone https://github.com/TriNgoc2077/rescuebot-model.git
+cd rescuebot-model
+```
+
+```bash
+# 1. Create virtual environment (Python 3.10.x)
 python -m venv .venv
 .venv\Scripts\activate  # On Windows
 
